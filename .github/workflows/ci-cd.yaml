@@ -1,0 +1,116 @@
+
+name: Shop API CI/CD
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-test-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      # 1. Download the source code.
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      # 2. Verify the runner has Docker.
+      - name: Check Docker
+        run: |
+          docker version
+          docker compose version
+
+      # 3. Create temporary test credentials.
+      - name: Prepare test database secret
+        run: |
+          mkdir -p secrets
+          openssl rand -hex 32 > secrets/db_password.txt
+          chmod 644 secrets/db_password.txt
+
+      # 4. Build the application image.
+      - name: Build API image
+        run: docker compose build api
+
+      # 5. Start all application services.
+      - name: Start test environment
+        run: |
+          docker compose up -d --no-build --scale api=1
+          docker compose ps
+
+      # 6. Wait until the application is ready.
+      - name: Wait for API readiness
+        run: |
+          for i in {1..30}; do
+            if curl -fsS --max-time 5 \
+              http://127.0.0.1:8084/health/ready; then
+              echo "API is ready"
+              exit 0
+            fi
+
+            echo "Waiting for application..."
+            sleep 2
+          done
+
+          echo "API did not become ready"
+          exit 1
+
+      # 7. Test creating and retrieving a product.
+      - name: Run integration tests
+        run: |
+          response=$(curl -fsS \
+            -X POST http://127.0.0.1:8084/products \
+            -H "Content-Type: application/json" \
+            -d '{"name":"CI Keyboard","price":49.99}')
+
+          echo "Created product: $response"
+
+          id=$(echo "$response" | jq -er '.id')
+
+          curl -fsS http://127.0.0.1:8084/products \
+            | jq -e --argjson id "$id" \
+              'any(.[]; .id == $id and .name == "CI Keyboard" and .price == 49.99)'
+
+          echo "Integration tests passed"
+
+      # 8. Authenticate to GitHub Container Registry.
+      - name: Login to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GHCR_TOKEN" | docker login ghcr.io \
+            -u "$GITHUB_ACTOR" --password-stdin
+
+      # 9. Publish the exact image that passed the tests.
+      - name: Publish tested image
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/shop-api"
+          tag="sha-${GITHUB_SHA}"
+
+          container=$(docker compose ps -q api)
+          image_id=$(docker inspect -f '{{.Image}}' "$container")
+
+          docker tag "$image_id" "$image:$tag"
+          docker push "$image:$tag"
+
+          echo "Published $image:$tag"
+
+      # 10. Print logs if anything failed.
+      - name: Collect failure logs
+        if: failure()
+        run: |
+          docker compose ps -a
+          docker compose logs --no-color
+
+      # 11. Remove the temporary test environment.
+      - name: Cleanup
+        if: always()
+        run: docker compose down -v
+
