@@ -76,7 +76,7 @@ jobs:
 
           curl -fsS http://127.0.0.1:8084/products \
             | jq -e --argjson id "$id" \
-              'any(.[]; .id == $id and .name == "CI Keyboard" and .price == 49.99)'
+              'any(.[]; .id == $id and .name == "CI Keyboard" and .price == 99.99)'
 
           echo "Integration tests passed"
 
