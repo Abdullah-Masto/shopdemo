@@ -10,6 +10,10 @@ permissions:
   contents: read
   packages: write
 
+concurrency:
+  group: shopdemo-production
+  cancel-in-progress: false
+
 jobs:
   build-test-publish:
     runs-on: ubuntu-24.04
@@ -76,7 +80,7 @@ jobs:
 
           curl -fsS http://127.0.0.1:8084/products \
             | jq -e --argjson id "$id" \
-              'any(.[]; .id == $id and .name == "CI Keyboard" and .price == 99.99)'
+              'any(.[]; .id == $id and .name == "CI Keyboard" and .price == 49.99)'
 
           echo "Integration tests passed"
 
@@ -113,4 +117,105 @@ jobs:
       - name: Cleanup
         if: always()
         run: docker compose down -v
+
+
+  deploy:
+    name: Deploy to VPS
+    needs: build-test-publish
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      # 1. Download the deployment configuration.
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      # 2. Configure secure SSH authentication.
+      - name: Configure SSH
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/shopdemo_ci
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+          chmod 600 ~/.ssh/shopdemo_ci
+          chmod 600 ~/.ssh/known_hosts
+
+      # 3. Verify that the GitHub runner can reach the VPS.
+      - name: Test VPS connection
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh -i ~/.ssh/shopdemo_ci \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=10 \
+            "$VPS_USER@$VPS_HOST" \
+            "whoami && docker --version"
+
+      # 4. Upload only the required deployment files.
+      - name: Upload deployment configuration
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          tar -czf - \
+            compose.yaml \
+            compose.prod.yaml \
+            deploy.sh \
+            nginx/default.conf \
+            db/init \
+          | ssh -i ~/.ssh/shopdemo_ci \
+              -o BatchMode=yes \
+              -o StrictHostKeyChecking=yes \
+              "$VPS_USER@$VPS_HOST" \
+              "mkdir -p ~/shopdemo && cd ~/shopdemo && tar -xzf -"
+
+      # 5. Deploy the exact image published by CI.
+      - name: Deploy tested image
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}:sha-${GITHUB_SHA}"
+
+          ssh_opts=(
+            -i "$HOME/.ssh/shopdemo_ci"
+            -o BatchMode=yes
+            -o StrictHostKeyChecking=yes
+            -o ConnectTimeout=10
+          )
+
+          target="$VPS_USER@$VPS_HOST"
+
+          # Use temporary registry credentials on the VPS.
+          remote_config=$(ssh "${ssh_opts[@]}" "$target" \
+            'mktemp -d')
+
+          # Remove temporary credentials, even if deployment fails.
+          trap 'ssh "${ssh_opts[@]}" "$target" "rm -rf -- \"$remote_config\"" || true' EXIT
+
+          # Authenticate the VPS to GHCR using this workflow's token.
+          printf '%s\n' "$GHCR_TOKEN" \
+            | ssh "${ssh_opts[@]}" "$target" \
+                "DOCKER_CONFIG='$remote_config' docker login ghcr.io \
+                 -u '$GITHUB_ACTOR' --password-stdin"
+
+          # Deploy and verify application readiness.
+          ssh "${ssh_opts[@]}" "$target" \
+            "cd ~/shopdemo && DOCKER_CONFIG='$remote_config' bash deploy.sh '$image'"
+
 

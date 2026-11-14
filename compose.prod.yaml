@@ -1,0 +1,15 @@
+
+services:
+  nginx:
+    ports: !override
+      - "80:80"
+    restart: unless-stopped
+
+  api:
+    build: !reset null
+    image: ${SHOP_IMAGE:?SHOP_IMAGE must be set}
+    restart: unless-stopped
+
+  db:
+    restart: unless-stopped
+
