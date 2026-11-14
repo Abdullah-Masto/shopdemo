@@ -91,7 +91,7 @@ jobs:
       # 9. Publish the exact image that passed the tests.
       - name: Publish tested image
         run: |
-          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/shop-api"
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
           tag="sha-${GITHUB_SHA}"
 
           container=$(docker compose ps -q api)
