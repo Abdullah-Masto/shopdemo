@@ -105,6 +105,13 @@ app.MapGet("/instance", () => Results.Ok(new
 }));
 
 
+app.MapGet("/version", () => new
+{
+    version = "2.0.0",
+    message = "Deployed automatically with GitHub Actions!"
+});
+
+
 app.Run();
 
 record Product(int Id, string Name, decimal Price);
