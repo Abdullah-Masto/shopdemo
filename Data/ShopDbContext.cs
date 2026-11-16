@@ -6,6 +6,8 @@ public class Product
     public int Id { get; set; }
     public string Name { get; set; } = "";
     public decimal Price { get; set; }
+
+    public int StockQuantity { get; set; }
 }
 
 public class ShopDbContext(
@@ -40,6 +42,11 @@ public class ShopDbContext(
         product.Property(p => p.Price)
             .HasColumnName("price")
             .HasPrecision(10, 2)
+            .IsRequired();
+
+        product.Property(p => p.StockQuantity)
+            .HasColumnName("stock_quantity")
+            .HasDefaultValue(0)
             .IsRequired();
     }
 }

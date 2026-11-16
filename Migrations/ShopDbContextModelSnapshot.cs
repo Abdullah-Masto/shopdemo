@@ -40,6 +40,12 @@ namespace DemoApi.Migrations
                         .HasColumnType("numeric(10,2)")
                         .HasColumnName("price");
 
+                    b.Property<int>("StockQuantity")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0)
+                        .HasColumnName("stock_quantity");
+
                     b.HasKey("Id")
                         .HasName("products_pkey");
 
