@@ -43,11 +43,19 @@ jobs:
       - name: Build API image
         run: docker compose build api
 
-      # 5. Start all application services.
-      - name: Start test environment
+      # 5. Start migration then application services.
+      - name: Start PostgreSQL
+        run: docker compose up -d --wait db
+
+      - name: Apply database migrations
+        run: |
+          docker compose run --rm --no-deps api --migrate
+
+      - name: Start application services
         run: |
           docker compose up -d --no-build --scale api=1
           docker compose ps
+
 
       # 6. Wait until the application is ready.
       - name: Wait for API readiness
